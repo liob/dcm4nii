@@ -1,16 +1,15 @@
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
+import os
 
-import os, sys
-from os import path
-from shutil import move
-import numpy as np
-import dicom
+import pydicom as dicom
 import nibabel as nib
+import numpy as np
+
 from tqdm import tqdm, trange
 from datetime import datetime, timedelta
 from scipy.interpolate import Rbf
-from matplotlib import pyplot as plt
+from PIL import Image
 
 
 def dcmtime2py(t):
@@ -63,8 +62,8 @@ class Patient(object):
 
     def append(self, dcm):
         if not dcm.StudyInstanceUID in self.studies:
-            self.studies[dcm.StudyInstanceUID] = Study(StudyInstanceUID = dcm.StudyInstanceUID,
-                                                       patient = self)
+            self.studies[dcm.StudyInstanceUID] = Study(StudyInstanceUID=dcm.StudyInstanceUID,
+                                                       patient=self)
         self.studies[dcm.StudyInstanceUID].append(dcm)
 
 
@@ -89,9 +88,9 @@ class Study(object):
             series_identifier = dcm.SeriesInstanceUID
 
         if not series_identifier in self.series:
-            self.series[series_identifier] = Series(SeriesInstanceUID = dcm.SeriesInstanceUID,
-                                                    patient = self.patient,
-                                                    study = self)
+            self.series[series_identifier] = Series(SeriesInstanceUID=dcm.SeriesInstanceUID,
+                                                    patient=self.patient,
+                                                    study=self)
 
         self.series[series_identifier].append(dcm)
         if self.StudyDate == None:
@@ -112,7 +111,7 @@ class Series(object):
         self.dcm_last = None
 
     def __repr__(self):
-            return 'Series %s' % str(self.SeriesInstanceUID)
+        return 'Series %s' % str(self.SeriesInstanceUID)
 
     def append(self, dcm):
         self.dicoms.append(dcm)
@@ -145,24 +144,28 @@ class Series(object):
                 self.dcm_last = dcm
 
         if self.ProtocolName == '':
-            try: self.ProtocolName = dcm.ProtocolName
-            except: self.ProtocolName = 'undefined'
+            try:
+                self.ProtocolName = dcm.ProtocolName
+            except:
+                self.ProtocolName = 'undefined'
 
         if self.SeriesDescription == '':
-            try: self.SeriesDescription = dcm.SeriesDescription
-            except: self.SeriesDescription = 'undefined'
+            try:
+                self.SeriesDescription = dcm.SeriesDescription
+            except:
+                self.SeriesDescription = 'undefined'
 
         if self.SeriesNumber == '':
-            try: self.SeriesNumber = dcm.SeriesNumber
-            except: self.SeriesNumber = 'undefined'
-
+            try:
+                self.SeriesNumber = dcm.SeriesNumber
+            except:
+                self.SeriesNumber = 'undefined'
 
     def get_shape(self):
         dcm = self.dicoms[0]
         shape = dcm.pixel_array.shape
-        n_slices = len(self.timesteps[self.timesteps.keys()[0]])
-        return (shape[0], shape[1], n_slices, len(self.timesteps))
-
+        n_slices = len(self.timesteps[next(iter(self.timesteps))])
+        return shape[0], shape[1], n_slices, len(self.timesteps)
 
     def check_integrity(self, max_t_delta=1.5, c_delta_t=True):
         # check all timepoints have the same number of observations
@@ -173,76 +176,141 @@ class Series(object):
         if not sum(observations_checked) == len(observations):
             raise ValidationError('inconsistent number of DCMs per timestep! Files missing?')
 
-        #check no major variance is in the distribution of observations regarding time
+        # check no major variance is in the distribution of observations regarding time
         timesteps = sorted(self.timesteps.keys())
         t_gradient = []
         for i in range(len(timesteps)):
             if i == 0:
                 continue
             else:
-                t_delta = (timesteps[i] - timesteps[i-1]).total_seconds()
+                t_delta = (timesteps[i] - timesteps[i - 1]).total_seconds()
                 t_gradient.append(t_delta)
         t_checked = [x > max_t_delta for x in t_gradient]
         if (sum(t_checked) > 0) & c_delta_t:
             raise ValidationError('Major variance in timesteps. t_gradient: %s' % str(t_gradient))
 
+        # We can only create nifti files, if all orientations within a series are the same
+        orientation = self.dcm_first.ImageOrientationPatient
+        for dcm in self.dicoms:
+            if dcm.ImageOrientationPatient != orientation:
+                raise ValidationError('Varying image orientation in series')
+
+        # For now, we will assume that we have either one time step with many slices or many slices with one timestep
+        # -> shape(X,Y,n_slices, 1) or shape(X;Y,1,n_time_steps)
+        if self.get_shape()[2] != 1 and self.get_shape()[3] != 1:
+            raise ValidationError('Invalid shape: ', self.get_shape())
+
+        # We also need to ensure that the slices are uniformly sampled
+        # ToDo: Maybe add get_nii_interpolated to functionality?
+        positions = [np.array(dcm.ImagePositionPatient) for dcm in self.dicoms]
+        positions.sort(key=lambda pos: np.linalg.norm(pos))
+        diff = np.linalg.norm(positions[1] - positions[0])
+        for i in range(1, len(positions), 1):
+            current_diff = np.linalg.norm(positions[i] - positions[i-1])
+            epsilon = 1e-6
+            if abs(current_diff - diff) > epsilon:
+                raise ValidationError('Slices not uniformly sampled')
+
+    def _get_sorted_dicoms(self):
+        """
+        This function returns the dicoms of a series in a sorted list
+
+        It assumes that the dicom images are either part of 3D Volume or a 2D+t timeseries.
+        There are several ways to sort the images:
+        1: Using the InstanceNumber attribute (may not be set)
+        2: Using the Acquisition/Trigger Time attribute (may be equal for all images)
+        3: Using the ImagePositionPatient attribute (may also be equal for all images)
+        This function tries to find the best method
+        """
+
+        # Acquire all attributes
+        instance_numbers = [dcm.InstanceNumber for dcm in self.dicoms]
+        acquisition_times = []
+        for dcm in self.dicoms:
+            if hasattr(dcm, 'TriggerTime'):
+                series_time = dcmtime2py(dcm.SeriesTime)
+                trigger_time = float(dcm.TriggerTime)
+                delta_t = timedelta(milliseconds=trigger_time)
+                acquisition_time = series_time + delta_t
+                # otherwise use AcquisitionTime (resolution in s)
+            else:
+                acquisition_time = dcmtime2py(dcm.AcquisitionTime)
+            acquisition_times.append(acquisition_time)
+        image_position_patients = [dcm.ImagePositionPatient for dcm in self.dicoms]
+
+        # Check if any of these attributes are applicable for sorting the dicoms
+        # Instance Numbers (must be unique and not None)
+        if all(number is not None for number in instance_numbers) and \
+                len(instance_numbers) == len(set(instance_numbers)):
+            return sorted(self.dicoms, key=lambda dcm: dcm.InstanceNumber)
+
+        # Acquisition times (must be unique)
+        elif len(acquisition_times) == len(set(acquisition_times)):
+            return [dcm for _, dcm in sorted(zip(acquisition_times, self.dicoms))]
+
+        # Positions (must be unique)
+        elif len(image_position_patients) == len(set(image_position_patients)):
+            return sorted(self.dicoms, key=lambda dcm: np.linalg.norm(dcm.ImagePositionPatient))
+
+        else:
+            raise ValidationError("No sorting method applicable")
 
     def get_nii(self, ignore_checks=False):
         if not ignore_checks:
             self.check_integrity()
-        # build image
+
+        # Build image
         shape = self.get_shape()
-        im = np.empty(shape, dtype=np.float)
-        n_timestep, n_slice = 0, 0
-        for timestep in sorted(self.timesteps.keys()):
-            for islice in sorted(self.timesteps[timestep].keys()):
-                dcm = self.timesteps[timestep][islice]
-                im[:,:,n_slice,n_timestep] = dcm.pixel_array
-                n_slice += 1
-            n_timestep += 1
-            n_slice = 0
-        im = im[:,::-1,::-1]
+        n_slices = shape[2] * shape[3]
+        im = np.empty([shape[0], shape[1], n_slices], dtype=np.float)
+
+        # Iterate over all dicom images and sort them by their position
+        sorted_dicoms = self._get_sorted_dicoms()
+        for index, dcm in enumerate(sorted_dicoms):
+            im[:, :, index] = dcm.pixel_array
 
         # build the affine transform
         # http://nipy.org/nibabel/dicom/dicom_orientation.html
         timesteps = sorted(self.timesteps.keys())
-        tdelta = (timesteps[-1] - timesteps[0]).total_seconds() / (shape[3] - 1) * 1000 # in milliseconds
+        tdelta = (timesteps[-1] - timesteps[0]).total_seconds() / (shape[3] - 1) * 1000  # in milliseconds
 
-        dr, dc = float(dcm.PixelSpacing[0]), float(dcm.PixelSpacing[1])
-        ImageOrientationPatient = [float(x) for x in dcm.ImageOrientationPatient]
-        ImagePositionPatient    = [float(x) for x in dcm.ImagePositionPatient]
-        F_12, F_22, F_32, F_11, F_21, F_31 = ImageOrientationPatient
-        S_x, S_y, S_z = ImagePositionPatient
+        dr, dc = float(self.dicoms[0].PixelSpacing[0]), float(self.dicoms[0].PixelSpacing[1])
+        F_12, F_22, F_32, F_11, F_21, F_31 = [float(x) for x in dcm.ImageOrientationPatient]
 
-        T1 = [float(x) for x in self.dcm_first.ImagePositionPatient]
-        TN = [float(x) for x in self.dcm_last.ImagePositionPatient]
-        N  = len(self.timesteps[self.timesteps.keys()[0]])
+        T1 = [float(x) for x in sorted_dicoms[0].ImagePositionPatient]
 
-        n_1, n_2, n_3 = np.cross([F_11, F_21, F_31], [F_12, F_22, F_32])
+        # In case all images have same ImagePositionPatient attributes, we need to calculate the last one
+        # ToDO: Add implementation. For now raise Error. No Idea how to get the right directional vector.
+        # ToDo: Cross product is no not unique solution
+        if sorted_dicoms[0].ImagePositionPatient == sorted_dicoms[-1].ImagePositionPatient:
+            raise ValidationError("All ImagePositionPatient attributes equal")
 
-        affine = [[F_11*dr, F_12*dc, (T1[0]-TN[0])/(1-N), T1[0]],
-                  [F_21*dr, F_22*dc, (T1[1]-TN[1])/(1-N), T1[1]],
-                  [F_31*dr, F_32*dc, (T1[2]-TN[2])/(1-N), T1[2]],
-                  [0,       0,       0,                   1   ]]
+        TN = [float(x) for x in sorted_dicoms[-1].ImagePositionPatient]
+        N = im.shape[2]
+
+        affine = [[F_11 * dr, F_12 * dc, (T1[0] - TN[0]) / (1 - N), T1[0]],
+                  [F_21 * dr, F_22 * dc, (T1[1] - TN[1]) / (1 - N), T1[1]],
+                  [F_31 * dr, F_32 * dc, (T1[2] - TN[2]) / (1 - N), T1[2]],
+                  [0, 0, 0, 1]]
+
         affine = np.array(affine)
         nii = nib.Nifti1Image(im, affine)
-        nii.header['pixdim'][4] = tdelta
-        nii.header.set_xyzt_units('mm', 'sec')
-
+        # nii.header['pixdim'][4] = tdelta
+        # nii.header.set_xyzt_units('mm', 'sec')
         return nii
 
-
     def get_nii_interprolated(self, stepsize):
-        #def interpolate(x, y, _x, function='gaussian', stepsize=stepsize, smooth=0.01):
+        # def interpolate(x, y, _x, function='gaussian', stepsize=stepsize, smooth=0.01):
         def interpolate(x, y, _x, function='linear', stepsize=stepsize, smooth=0):
             rbf = Rbf(x, y, function=function, smooth=smooth)
             _y = rbf(_x)
             return _y
+
         self.check_integrity(c_delta_t=False)
         img = self.get_nii(ignore_checks=True)
         timesteps = sorted(self.timesteps.keys())
         start_time = timesteps[0]
-        x  = [(x - start_time).total_seconds() for x in timesteps]
+        x = [(x - start_time).total_seconds() for x in timesteps]
         _x = np.arange(x[-1], step=stepsize)
 
         im = img.get_data()
@@ -263,6 +331,7 @@ class Series(object):
 
 if __name__ == "__main__":
     import argparse
+
     parser = argparse.ArgumentParser(description='convert dicom files to nifti (2D/3D/4D)')
     parser.add_argument('-o', metavar='OUTPUT DIR', type=str, default='.',
                         help='output directory for the plots')
@@ -278,37 +347,37 @@ if __name__ == "__main__":
 
     for input_folder in tqdm(args.input_folders):
         container = DCMContainer(use_protocol_name=args.pn)
-        print 'reading files for', input_folder
+        print('reading files for', input_folder)
         for root, dirnames, filenames in os.walk(input_folder):
             for filename in tqdm(filenames, desc='reading headers'):
                 fn = os.path.join(root, filename)
                 try:
                     dcm = dicom.read_file(fn, defer_size='1 KB')
                 except:
-                    print '%s is not a valid dicom file!' % fn
+                    print('%s is not a valid dicom file!' % fn)
                     continue
                 container.append(dcm)
 
         success = False
-        for p_idx, patient in container.patients.iteritems():
-            print patient
-            for s_idx, study in patient.studies.iteritems():
-                print '    ', study
-                for se_idx, series in study.series.iteritems():
+        for p_idx, patient in container.patients.items():
+            print(patient)
+            for s_idx, study in patient.studies.items():
+                print('    ', study)
+                for se_idx, series in study.series.items():
                     shape = series.get_shape()
-                    print '        ', series, shape, series.SeriesDescription
+                    print('        ', series, shape, series.SeriesDescription)
                     suffix = ''
                     if args.interpolate:
                         suffix += '_INTERPOLATED=%ss' % str(args.stepsize)
                     fname = '%s_%s_%s_%s%s.nii' % (patient.PatientID,
-                                                 study.StudyDate.strftime('%Y%m%d'),
-                                                 series.SeriesNumber,
-                                                 series.SeriesDescription,
-                                                 suffix)
-                    fname = path.join(args.o, fname)
+                                                   study.StudyDate.strftime('%Y%m%d'),
+                                                   series.SeriesNumber,
+                                                   series.SeriesDescription,
+                                                   suffix)
+                    fname = os.path.join(args.o, fname)
                     # do not overwrite existing files
-                    if path.isfile(fname):
-                        print '%s already exists - SKIPPING' % fname
+                    if os.path.isfile(fname):
+                        print('%s already exists - SKIPPING' % fname)
                         continue
                     try:
                         if args.interpolate:
@@ -316,11 +385,11 @@ if __name__ == "__main__":
                         else:
                             nii = series.get_nii()
                     except ValidationError as e:
-                        print 'Validation FAILED: %s' % str(e)
+                        print('Validation FAILED: %s' % str(e))
                         continue
                     nii.to_filename(fname)
-                    print 'created', fname
+                    print('created', fname)
                     success = True
 
         if not success:
-            print 'found no valid volumes in %s' % input_folder
+            print('found no valid volumes in %s' % input_folder)

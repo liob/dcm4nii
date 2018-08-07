@@ -199,7 +199,6 @@ class Series(object):
         # -> shape(X,Y,n_slices, 1) or shape(X;Y,1,n_time_steps)
         if self.get_shape()[2] != 1 and self.get_shape()[3] != 1:
             raise ValidationError('Invalid shape: ', self.get_shape())
-
         # We also need to ensure that the slices are uniformly sampled
         # ToDo: Maybe add get_nii_interpolated to functionality?
         positions = [np.array(dcm.ImagePositionPatient) for dcm in self.dicoms]
@@ -213,47 +212,21 @@ class Series(object):
 
     def _get_sorted_dicoms(self):
         """
-        This function returns the dicoms of a series in a sorted list
+        This function returns the dicoms of this series in a sorted list by applying the method described in
+        https://itk.org/pipermail/insight-users/2003-September/004762.html
 
         It assumes that the dicom images are either part of 3D Volume or a 2D+t timeseries.
-        There are several ways to sort the images:
-        1: Using the InstanceNumber attribute (may not be set)
-        2: Using the Acquisition/Trigger Time attribute (may be equal for all images)
-        3: Using the ImagePositionPatient attribute (may also be equal for all images)
-        This function tries to find the best method
         """
 
-        # Acquire all attributes
-        instance_numbers = [dcm.InstanceNumber for dcm in self.dicoms]
-        acquisition_times = []
-        for dcm in self.dicoms:
-            if hasattr(dcm, 'TriggerTime'):
-                series_time = dcmtime2py(dcm.SeriesTime)
-                trigger_time = float(dcm.TriggerTime)
-                delta_t = timedelta(milliseconds=trigger_time)
-                acquisition_time = series_time + delta_t
-                # otherwise use AcquisitionTime (resolution in s)
-            else:
-                acquisition_time = dcmtime2py(dcm.AcquisitionTime)
-            acquisition_times.append(acquisition_time)
-        image_position_patients = [dcm.ImagePositionPatient for dcm in self.dicoms]
+        # Calculate normal of slices
+        row_cosines = self.dicoms[0].ImageOrientationPatient[:3]
+        col_cosines = self.dicoms[0].ImageOrientationPatient[3:]
+        n = np.cross(row_cosines, col_cosines)
 
-        # Check if any of these attributes are applicable for sorting the dicoms
-        # Instance Numbers (must be unique and not None)
-        if all(number is not None for number in instance_numbers) and \
-                len(instance_numbers) == len(set(instance_numbers)):
-            return sorted(self.dicoms, key=lambda dcm: dcm.InstanceNumber)
-
-        # Acquisition times (must be unique)
-        elif len(acquisition_times) == len(set(acquisition_times)):
-            return [dcm for _, dcm in sorted(zip(acquisition_times, self.dicoms))]
-
-        # Positions (must be unique)
-        elif len(image_position_patients) == len(set(image_position_patients)):
-            return sorted(self.dicoms, key=lambda dcm: np.linalg.norm(dcm.ImagePositionPatient))
-
-        else:
-            raise ValidationError("No sorting method applicable")
+        # Calculate dist value for all slices and order dicoms by that
+        distances = [np.dot(n, dcm.ImagePositionPatient) for dcm in self.dicoms]
+        result = [x for x, _ in sorted(zip(self.dicoms, distances), key=lambda x: x[1])]
+        return result
 
     def get_nii(self, ignore_checks=False):
         if not ignore_checks:
@@ -264,22 +237,19 @@ class Series(object):
         n_slices = shape[2] * shape[3]
         im = np.empty([shape[0], shape[1], n_slices], dtype=np.float)
 
-        # Iterate over all dicom images and sort them by their position
+        # Iterate over all dicom images
         sorted_dicoms = self._get_sorted_dicoms()
         for index, dcm in enumerate(sorted_dicoms):
             im[:, :, index] = dcm.pixel_array
 
-        # build the affine transform
+        # Build the affine transform
         # http://nipy.org/nibabel/dicom/dicom_orientation.html
-        timesteps = sorted(self.timesteps.keys())
-        tdelta = (timesteps[-1] - timesteps[0]).total_seconds() / (shape[3] - 1) * 1000  # in milliseconds
-
         dr, dc = float(self.dicoms[0].PixelSpacing[0]), float(self.dicoms[0].PixelSpacing[1])
         F_12, F_22, F_32, F_11, F_21, F_31 = [float(x) for x in dcm.ImageOrientationPatient]
 
         T1 = [float(x) for x in sorted_dicoms[0].ImagePositionPatient]
 
-        # In case all images have same ImagePositionPatient attributes, we need to calculate the last one
+        # In case all images have same ImagePositionPatient attributes, we need to calculate the last one (TN)
         # ToDO: Add implementation. For now raise Error. No Idea how to get the right directional vector.
         # ToDo: Cross product is no not unique solution
         if sorted_dicoms[0].ImagePositionPatient == sorted_dicoms[-1].ImagePositionPatient:
@@ -295,8 +265,6 @@ class Series(object):
 
         affine = np.array(affine)
         nii = nib.Nifti1Image(im, affine)
-        # nii.header['pixdim'][4] = tdelta
-        # nii.header.set_xyzt_units('mm', 'sec')
         return nii
 
     def get_nii_interprolated(self, stepsize):

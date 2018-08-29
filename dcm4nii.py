@@ -9,7 +9,6 @@ import numpy as np
 from tqdm import tqdm, trange
 from datetime import datetime, timedelta
 from scipy.interpolate import Rbf
-from PIL import Image
 
 
 def dcmtime2py(t):
@@ -124,8 +123,10 @@ class Series(object):
             delta_t = timedelta(milliseconds=TriggerTime)
             AcquisitionTime = SeriesTime + delta_t
         # otherwise use AcquisitionTime (resolution in s)
-        else:
+        elif hasattr(dcm, 'AcquisitionTime'):
             AcquisitionTime = dcmtime2py(dcm.AcquisitionTime)
+        else:
+            raise ValidationError("Dicom file has neither Trigger nor Acquisition time")
 
         if not AcquisitionTime in self.timesteps:
             self.timesteps[AcquisitionTime] = {}
@@ -199,16 +200,19 @@ class Series(object):
         # -> shape(X,Y,n_slices, 1) or shape(X;Y,1,n_time_steps)
         if self.get_shape()[2] != 1 and self.get_shape()[3] != 1:
             raise ValidationError('Invalid shape: ', self.get_shape())
+
         # We also need to ensure that the slices are uniformly sampled
         # ToDo: Maybe add get_nii_interpolated to functionality?
-        positions = [np.array(dcm.ImagePositionPatient) for dcm in self.dicoms]
-        positions.sort(key=lambda pos: np.linalg.norm(pos))
-        diff = np.linalg.norm(positions[1] - positions[0])
+        sorted_dicoms = self._get_sorted_dicoms()
+        positions = [np.array(dcm.ImagePositionPatient) for dcm in sorted_dicoms]
+        # Look at the deviation of neighbour slice distances
+        diffs = []
         for i in range(1, len(positions), 1):
-            current_diff = np.linalg.norm(positions[i] - positions[i-1])
-            epsilon = 1e-6
-            if abs(current_diff - diff) > epsilon:
-                raise ValidationError('Slices not uniformly sampled')
+            diffs.append(np.linalg.norm(positions[i] - positions[i-1]))
+        dev = np.std(diffs)
+        epsilon = 1e-9
+        if dev > epsilon:
+            raise ValidationError("Slices not uniformly sampled, std deviation: ", dev)
 
     def _get_sorted_dicoms(self):
         """
@@ -321,10 +325,11 @@ if __name__ == "__main__":
                 fn = os.path.join(root, filename)
                 try:
                     dcm = dicom.read_file(fn, defer_size='1 KB')
+                    container.append(dcm)
                 except:
                     print('%s is not a valid dicom file!' % fn)
                     continue
-                container.append(dcm)
+
 
         success = False
         for p_idx, patient in container.patients.items():

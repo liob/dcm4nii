@@ -95,6 +95,50 @@ class Study(object):
         if self.StudyDate == None:
             self.StudyDate = dcmdate2py(dcm.StudyDate)
 
+    def set_phases(self):
+        all_series = []
+        for series_index, series in self.series.items():
+            all_series.append((series_index, series.SeriesDescription, series.SeriesTime, 0))
+        all_series = sorted(all_series, key = lambda element: (element[1], element[2]))
+
+        i = 1
+        while i < len(all_series):
+            if all_series[i][1] == all_series[i-1][1]:
+                if all_series[i][1] == all_series[i+1][1] and i < len(all_series):
+                    l = list(all_series[i-1])
+                    l[3] = 1
+                    all_series[i-1] = tuple(l)
+
+                    l = list(all_series[i])
+                    l[3] = 2
+                    all_series[i] = tuple(l)
+
+                    l = list(all_series[i + 1])
+                    l[3] = 3
+                    all_series[i + 1] = tuple(l)
+
+                    i += 3
+                else:
+                    l = list(all_series[i - 1])
+                    l[3] = 1
+                    all_series[i - 1] = tuple(l)
+
+                    l = list(all_series[i])
+                    l[3] = 3
+                    all_series[i] = tuple(l)
+                    i += 2
+            i += 1
+
+        for element in all_series:
+            if element[3] == 0:
+                continue
+            elif element[3] == 1:
+                self.series[element[0]].Phase = '_fruehePhase'
+            elif element[3] == 2:
+                self.series[element[0]].Phase = '_mittlerePhase'
+            elif element[3] == 3:
+                self.series[element[0]].Phase = '_spaetePhase'
+
 
 class Series(object):
     def __init__(self, SeriesInstanceUID, patient, study):
@@ -108,6 +152,11 @@ class Series(object):
         self.timesteps = {}
         self.dcm_first = None
         self.dcm_last = None
+        self.AccessionNumber = ''
+        self.ContrastBolusAgent = ''
+        self.SeriesTime = None
+        self.FolderName = ''
+        self.Phase = ''
 
     def __repr__(self):
         return 'Series %s' % str(self.SeriesInstanceUID)
@@ -115,6 +164,11 @@ class Series(object):
     def append(self, dcm):
         self.dicoms.append(dcm)
         InstanceNumber = int(dcm.InstanceNumber)
+
+        self.SeriesTime = dcmtime2py(dcm.SeriesTime)
+
+        if self.SeriesTime == None:
+            self.SeriesTime = dcmdate2py(dcm.SeriesTime)
 
         # use TriggerTime if present (more accurate)
         if hasattr(dcm, 'TriggerTime'):
@@ -156,11 +210,39 @@ class Series(object):
             except:
                 self.SeriesDescription = 'undefined'
 
+        if self.FolderName == '':
+            if self.SeriesDescription.find('_3DMRCP') >= 0:
+                orientation = '3DMRCP'
+            elif self.SeriesDescription.find('t1_') >= 0:
+                orientation = 't1'
+            elif self.SeriesDescription.find('t2_') >= 0:
+                orientation = 't2'
+            else:
+                orientation = 'undef'
+            self.FolderName = orientation
+
+
+        if self.AccessionNumber == '':
+            try:
+                self.AccessionNumber = dcm.AccessionNumber
+            except:
+                self.AccessionNumber = 'undefined'
+
+        if self.ContrastBolusAgent == '':
+            try:
+                self.ContrastBolusAgent = dcm.ContrastBolusAgent
+                self.FolderName += '_%s' % dcm.ContrastBolusAgent
+            except:
+                self.ContrastBolusAgent = 'undefined'
+                self.FolderName += '_noContrast'
+
         if self.SeriesNumber == '':
             try:
                 self.SeriesNumber = dcm.SeriesNumber
             except:
                 self.SeriesNumber = 'undefined'
+
+
 
     def get_shape(self):
         dcm = self.dicoms[0]
@@ -332,14 +414,19 @@ if __name__ == "__main__":
 
 
         success = False
+        nifty_counter = 0
         for p_idx, patient in container.patients.items():
             print(patient)
             for s_idx, study in patient.studies.items():
                 print('    ', study)
+                study.set_phases()
                 for se_idx, series in study.series.items():
                     shape = series.get_shape()
                     print('        ', series, shape, series.SeriesDescription)
+
                     suffix = ''
+                    if not series.ContrastBolusAgent == 'undefined':
+                        suffix += '_%s' % series.ContrastBolusAgent
                     if args.interpolate:
                         suffix += '_INTERPOLATED=%ss' % str(args.stepsize)
                     fname = '%s_%s_%s_%s%s.nii' % (patient.PatientID,
@@ -347,7 +434,16 @@ if __name__ == "__main__":
                                                    series.SeriesNumber,
                                                    series.SeriesDescription,
                                                    suffix)
-                    fname = os.path.join(args.o, fname)
+                    fname = '%s.nii' % (nifty_counter)
+                    nifty_counter += 1
+
+                    FolderName = series.FolderName + series.Phase
+
+                    path = os.path.join(args.o, FolderName)
+
+                    if not os.path.exists(path):
+                        os.makedirs(path)
+                    fname = os.path.join(path, fname)
                     # do not overwrite existing files
                     if os.path.isfile(fname):
                         print('%s already exists - SKIPPING' % fname)

@@ -168,20 +168,43 @@ class Study(object):
                             j -= 1
                     break
 
-        # 8 ven
+        # 8 ven 4mm
         for index in range(len(all_series)):
             if all_series[index][2] == '':
-                if all_series[index][1].find('t1_vibe_tra_fs_dyn') >= 0:
+                if all_series[index][1].find('t1_vibe_tra_fs_dyn_4') >= 0:
                     searching = True
                     j = 0
                     while searching:
-                        if all_series[index + j][1].find('t1_vibe_tra_fs_dyn') >= 0:
-                            all_series[index + j][2] = 't1_vibe_fs_dyn_ven_%s_' % (j + 1)
+                        if all_series[index + j][1].find('t1_vibe_tra_fs_dyn_4') >= 0:
+                            all_series[index + j][2] = 't1_vibe_fs_dyn_ven_4mm_%s_' % (j + 1)
                             j += 1
                         else:
                             searching = False
                     max = j
-                    if max > 2:
+                    if max > 3:
+                        while j > 0:
+                            all_series[index + j - 1][2] = 'error_to_many_ven'
+                            j -= 1
+                    else:
+                        while j > 0:
+                            all_series[index + j - 1][2] += str(max)
+                            j -= 1
+                    break
+
+        # 8 ven 2mm
+        for index in range(len(all_series)):
+            if all_series[index][2] == '':
+                if all_series[index][1].find('t1_vibe_tra_fs_dyn_2') >= 0:
+                    searching = True
+                    j = 0
+                    while searching:
+                        if all_series[index + j][1].find('t1_vibe_tra_fs_dyn_2') >= 0:
+                            all_series[index + j][2] = 't1_vibe_fs_dyn_ven_2mm_%s_' % (j + 1)
+                            j += 1
+                        else:
+                            searching = False
+                    max = j
+                    if max > 3:
                         while j > 0:
                             all_series[index + j - 1][2] = 'error_to_many_ven'
                             j -= 1

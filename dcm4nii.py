@@ -6,6 +6,7 @@ import pydicom as dicom
 import nibabel as nib
 import numpy as np
 
+import argparse
 
 from tqdm import tqdm, trange
 from datetime import datetime, timedelta
@@ -131,8 +132,8 @@ class Study(object):
                     all_series[index][2] = 't1_fl2d_5mm'
                     break
 
-        #  2 t2_spc_cor
-        for index in range(len(all_series)):
+        #  2 t2_spc_cor mrcp use the last one
+        for index in reversed(range(len(all_series))):
             if all_series[index][2] == '':
                 if all_series[index][1].find('t2_spc_cor') >= 0 and all_series[index][1].find('mrcp') >= 0:
                     all_series[index][2] = 't2_spc_cor'
@@ -217,6 +218,24 @@ class Study(object):
                             j -= 1
                     break
 
+
+
+        # 12 / 13 t1_vibe_tra_fs_late
+        for index in reversed(range(len(all_series))):
+            if all_series[index][2] == '':
+                if all_series[index][1].find('t1_vibe_tra_fs') >= 0:
+                    all_series[index][2] = 't1_vibe_tra_fs_late'
+                    break
+
+        # 12 / 14 t1_vibe_cor_fs_late
+        for index in reversed(range(len(all_series))):
+            if all_series[index][2] == '':
+                if all_series[index][1].find('t1_vibe_cor_fs') >= 0:
+                    all_series[index][2] = 't1_vibe_cor_fs_late'
+                    break
+
+
+
         # 9 t1_vibe_cor_fs
         for index in range(len(all_series)):
             if all_series[index][2] == '':
@@ -227,23 +246,20 @@ class Study(object):
         # 11 t2_haste_fs_cor
         for index in range(len(all_series)):
             if all_series[index][2] == '':
-                if all_series[index][1].find('t2_haste_fs_cor') >= 0 or all_series[index][1].find('t2_haste_cor_fs') >= 0:
+                if all_series[index][1].find('t2_haste_fs_cor') >= 0 or \
+                        all_series[index][1].find('t2_haste_cor_fs') >= 0:
                     all_series[index][2] = 't2_haste_fs_cor'
                     break
 
-        # 12 / 13 t1_vibe_tra_fs_late
+        # ?? t2_tse_tra
         for index in range(len(all_series)):
             if all_series[index][2] == '':
-                if all_series[index][1].find('t1_vibe_tra_fs') >= 0:
-                    all_series[index][2] = 't1_vibe_tra_fs_late'
+                if all_series[index][1].find('t2_tse_tra_fs') >= 0 or \
+                        all_series[index][1].find('t2_tse_fs_tra') >= 0:
+                    all_series[index][2] = 't2_tse_tra_fs'
                     break
 
-        # 12 / 14 t1_vibe_cor_fs_late
-        for index in range(len(all_series)):
-            if all_series[index][2] == '':
-                if all_series[index][1].find('t1_vibe_cor_fs') >= 0:
-                    all_series[index][2] = 't1_vibe_cor_fs_late'
-                    break
+
 
         for current_series in all_series:
             if current_series[2] == '':
@@ -500,8 +516,6 @@ class Series(object):
 
 
 if __name__ == "__main__":
-    import argparse
-
 
     parser = argparse.ArgumentParser(description='convert dicom files to nifti (2D/3D/4D)')
     parser.add_argument('-o', metavar='OUTPUT DIR', type=str, default='.',

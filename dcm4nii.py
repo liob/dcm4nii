@@ -545,7 +545,6 @@ if __name__ == "__main__":
                     print('%s is not a valid dicom file!' % fn)
                     continue
 
-
             success = False
             for p_idx, patient in container.patients.items():
                 print(patient)
@@ -554,24 +553,21 @@ if __name__ == "__main__":
                     study.set_series_filenames()
 
                     for se_idx, series in study.series.items():
-                        try:
-                            shape = series.get_shape()
-                        except:
-                            print "get_shape error \n"
-                            continue
 
                         if series.filename.find('error') >= 0:
                             continue
+
+                        shape = series.get_shape()
+
                         print('        ', series, shape, series.SeriesDescription)
 
                         suffix = ''
                         if args.interpolate:
                             suffix += '_INTERPOLATED=%ss' % str(args.stepsize)
 
-                        fname = '%s.nii' % (series.filename)
-                        #print "marker"
+                        fname = '%s.nii.gz' % (series.filename)
 
-                        # zusammensetzung rausfinden
+
                         foldername = study.AccessionNumber
 
                         path = os.path.join(args.o, foldername)
@@ -583,7 +579,7 @@ if __name__ == "__main__":
                         fname = os.path.join(path, fname)
 
 
-                        log_fname = os.path.join(path, 'log.txt')
+                        log_fname = os.path.join(path, "log_" + foldername + ".txt")
                         if not os.path.isfile(log_fname):
                             text_file = open(log_fname, "w")
                             text_file.write(study.log)
@@ -612,7 +608,7 @@ if __name__ == "__main__":
                         success = True
 
             if not success:
-                print('found no valid volumes in %s' % input_folder)
+                print('found no valid volumes in %s' % root)
 
             container = None
             container = DCMContainer(use_protocol_name=args.pn)

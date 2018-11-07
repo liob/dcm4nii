@@ -327,6 +327,7 @@ class Series(object):
         sorted_dicoms = self._get_sorted_dicoms()
         for index, dcm in enumerate(sorted_dicoms):
             im[:, :, index] = dcm.pixel_array
+        im = im[::-1, ::-1, ::-1]
 
         # Build the affine transform
         # http://nipy.org/nibabel/dicom/dicom_orientation.html

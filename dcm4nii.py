@@ -6,6 +6,8 @@ import pydicom as dicom
 import nibabel as nib
 import numpy as np
 
+import argparse
+
 from tqdm import tqdm, trange
 from datetime import datetime, timedelta
 from scipy.interpolate import Rbf
@@ -72,6 +74,10 @@ class Study(object):
         self.patient = patient
         self.series = {}
         self.StudyDate = None
+        self.log = ''
+        self.AccessionNumber = ''
+
+
 
     def __repr__(self):
         return 'Study %s' % str(self.StudyInstanceUID)
@@ -95,49 +101,179 @@ class Study(object):
         if self.StudyDate == None:
             self.StudyDate = dcmdate2py(dcm.StudyDate)
 
-    def set_phases(self):
+        if self.AccessionNumber == '':
+            try:
+                self.AccessionNumber = dcm.AccessionNumber
+            except:
+                self.AccessionNumber = 'undefined'
+
+    def set_series_filenames(self):
         all_series = []
         for series_index, series in self.series.items():
-            all_series.append((series_index, series.SeriesDescription, series.SeriesTime, 0))
-        all_series = sorted(all_series, key = lambda element: (element[1], element[2]))
-
-        i = 1
-        while i < len(all_series):
-            if all_series[i][1] == all_series[i-1][1]:
-                if all_series[i][1] == all_series[i+1][1] and i < len(all_series):
-                    l = list(all_series[i-1])
-                    l[3] = 1
-                    all_series[i-1] = tuple(l)
-
-                    l = list(all_series[i])
-                    l[3] = 2
-                    all_series[i] = tuple(l)
-
-                    l = list(all_series[i + 1])
-                    l[3] = 3
-                    all_series[i + 1] = tuple(l)
-
-                    i += 3
-                else:
-                    l = list(all_series[i - 1])
-                    l[3] = 1
-                    all_series[i - 1] = tuple(l)
-
-                    l = list(all_series[i])
-                    l[3] = 3
-                    all_series[i] = tuple(l)
-                    i += 2
-            i += 1
+            all_series.append([series.SeriesNumber, series.SeriesDescription, '', series_index])
+        #print "list sortetd by series_number"
+        all_series = sorted(all_series, key=lambda x: x[0])
 
         for element in all_series:
-            if element[3] == 0:
-                continue
-            elif element[3] == 1:
-                self.series[element[0]].Phase = '_fruehePhase'
-            elif element[3] == 2:
-                self.series[element[0]].Phase = '_mittlerePhase'
-            elif element[3] == 3:
-                self.series[element[0]].Phase = '_spaetePhase'
+            element[1] = element[1].replace('-', '_').lower()
+            element[1] = element[1].replace(' ', '')
+
+        for index in range(len(all_series)):
+            if all_series[index][1].find('mapping') >= 0 or all_series[index][1].find('navigator') >= 0 or \
+                    all_series[index][1].find('mip_cor') >= 0 or all_series[index][1].find('resp') >= 0 or \
+                    all_series[index][1].find('dixon') >= 0 or all_series[index][1].find('ringe3phasen') >= 0 or \
+                    all_series[index][1].find('4mm3messungen') >= 0:
+                all_series[index][2] = 'error_not_a_valid_imagename'
+
+        # 1 t1fl2d
+        for index in range(len(all_series)):
+            if all_series[index][2] == '':
+                if all_series[index][1].find('t1_fl2d_tra_5mm') >= 0:
+                    all_series[index][2] = 't1_fl2d_5mm'
+                    break
+
+        #  2 t2_spc_cor mrcp use the last one
+        for index in reversed(range(len(all_series))):
+            if all_series[index][2] == '':
+                if all_series[index][1].find('t2_spc_cor') >= 0 and all_series[index][1].find('mrcp') >= 0:
+                    all_series[index][2] = 't2_spc_cor'
+                    break #TODO or continue to find all other mrcp?
+
+        # 6 t1_vibe_tra
+        for index in range(len(all_series)):
+            if all_series[index][2] == '':
+                if all_series[index][1].find('t1_vibe_tra_fs') >= 0 and all_series[index][1].find('nativ'):
+                    all_series[index][2] = 't1_vibe_fs_nativ'
+                    break
+
+        # 7 arteriell_1 dyn
+        for index in range(len(all_series)):
+            if all_series[index][2] == '':
+                if all_series[index][1].find('t1_vibe_tra_dyn') >= 0 and all_series[index][1].find('art') >= 0:
+                    searching = True
+                    j = 0
+                    while searching:
+                        if all_series[index + j][1].find('t1_vibe_tra_dyn') >= 0 and all_series[index + j][1].find(
+                                'art') >= 0:
+                            all_series[index + j][2] = 't1_vibe_fs_dyn_art_%s_' % (j + 1)
+                            j += 1
+                        else:
+                            searching = False
+                    max = j
+                    if max > 3:
+                        while j > 0:
+                            all_series[index + j - 1][2] = 'error_to_many_art'
+                            j -= 1
+                    else:
+                        while j > 0:
+                            all_series[index + j - 1][2] += str(max)
+                            j -= 1
+                    break
+
+
+
+        # 8 ven_1 4mm
+        for index in range(len(all_series)):
+            if all_series[index][2] == '':
+                if all_series[index][1].find('t1_vibe_tra_fs_dyn_4') >= 0:
+                    searching = True
+                    j = 0
+                    while searching:
+                        if all_series[index + j][1].find('t1_vibe_tra_fs_dyn_4') >= 0:
+                            all_series[index + j][2] = 't1_vibe_fs_dyn_ven_4mm_%s_' % (j + 1)
+                            j += 1
+                        else:
+                            searching = False
+                    max = j
+                    if max > 3:
+                        while j > 0:
+                            all_series[index + j - 1][2] = 'error_to_many_ven'
+                            j -= 1
+                    else:
+                        while j > 0:
+                            all_series[index + j - 1][2] += str(max)
+                            j -= 1
+                    break
+
+        # 8 ven_2 2mm
+        for index in range(len(all_series)):
+            if all_series[index][2] == '':
+                if all_series[index][1].find('t1_vibe_tra_fs_dyn_2') >= 0:
+                    searching = True
+                    j = 0
+                    while searching:
+                        if all_series[index + j][1].find('t1_vibe_tra_fs_dyn_2') >= 0:
+                            all_series[index + j][2] = 't1_vibe_fs_dyn_ven_2mm_%s_' % (j + 1)
+                            j += 1
+                        else:
+                            searching = False
+                    max = j
+                    if max > 3:
+                        while j > 0:
+                            all_series[index + j - 1][2] = 'error_to_many_ven'
+                            j -= 1
+                    else:
+                        while j > 0:
+                            all_series[index + j - 1][2] += str(max)
+                            j -= 1
+                    break
+
+
+
+        # 12 / 13 t1_vibe_tra_fs_late
+        for index in reversed(range(len(all_series))):
+            if all_series[index][2] == '':
+                if all_series[index][1].find('t1_vibe_tra_fs') >= 0:
+                    all_series[index][2] = 't1_vibe_tra_fs_late'
+                    break
+
+        # 12 / 14 t1_vibe_cor_fs_late
+        for index in reversed(range(len(all_series))):
+            if all_series[index][2] == '':
+                if all_series[index][1].find('t1_vibe_cor_fs') >= 0:
+                    all_series[index][2] = 't1_vibe_cor_fs_late'
+                    break
+
+
+
+        # 9 t1_vibe_cor_fs
+        for index in range(len(all_series)):
+            if all_series[index][2] == '':
+                if all_series[index][1].find('t1_vibe_cor_fs') >= 0:
+                    all_series[index][2] = 't1_vibe_cor_fs'
+                    break
+
+        # 11 t2_haste_fs_cor
+        for index in range(len(all_series)):
+            if all_series[index][2] == '':
+                if all_series[index][1].find('t2_haste_fs_cor') >= 0 or \
+                        all_series[index][1].find('t2_haste_cor_fs') >= 0:
+                    all_series[index][2] = 't2_haste_fs_cor'
+                    break
+
+        # ?? t2_tse_tra
+        for index in range(len(all_series)):
+            if all_series[index][2] == '':
+                if all_series[index][1].find('t2_tse_tra_fs') >= 0 or \
+                        all_series[index][1].find('t2_tse_fs_tra') >= 0:
+                    all_series[index][2] = 't2_tse_tra_fs'
+                    break
+
+
+
+        for current_series in all_series:
+            if current_series[2] == '':
+                current_series[2] = 'error_description_not_matching'
+
+        self.log = ''
+        for current_series in all_series:
+            self.log += str(current_series[0]) + ':' + str(current_series[1]) + ' -> ' + str(current_series[2]) + '\n'
+            pass
+
+
+        for current_series in all_series:
+            self.series[current_series[3]].filename = current_series[2]
+
 
 
 class Series(object):
@@ -152,11 +288,11 @@ class Series(object):
         self.timesteps = {}
         self.dcm_first = None
         self.dcm_last = None
-        self.AccessionNumber = ''
         self.ContrastBolusAgent = ''
         self.SeriesTime = None
         self.FolderName = ''
         self.Phase = ''
+        self.filename = ''
 
     def __repr__(self):
         return 'Series %s' % str(self.SeriesInstanceUID)
@@ -222,11 +358,7 @@ class Series(object):
             self.FolderName = orientation
 
 
-        if self.AccessionNumber == '':
-            try:
-                self.AccessionNumber = dcm.AccessionNumber
-            except:
-                self.AccessionNumber = 'undefined'
+
 
         if self.ContrastBolusAgent == '':
             try:
@@ -385,7 +517,6 @@ class Series(object):
 
 
 if __name__ == "__main__":
-    import argparse
 
     parser = argparse.ArgumentParser(description='convert dicom files to nifti (2D/3D/4D)')
     parser.add_argument('-o', metavar='OUTPUT DIR', type=str, default='.',
@@ -401,9 +532,11 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     for input_folder in tqdm(args.input_folders):
+        print input_folder
         container = DCMContainer(use_protocol_name=args.pn)
         print('reading files for', input_folder)
         for root, dirnames, filenames in os.walk(input_folder):
+
             for filename in tqdm(filenames, desc='reading headers'):
                 fn = os.path.join(root, filename)
                 try:
@@ -413,53 +546,70 @@ if __name__ == "__main__":
                     print('%s is not a valid dicom file!' % fn)
                     continue
 
+            success = False
+            for p_idx, patient in container.patients.items():
+                print(patient)
+                for s_idx, study in patient.studies.items():
+                    print('    ', study)
+                    study.set_series_filenames()
 
-        success = False
-        nifty_counter = 0
-        for p_idx, patient in container.patients.items():
-            print(patient)
-            for s_idx, study in patient.studies.items():
-                print('    ', study)
-                study.set_phases()
-                for se_idx, series in study.series.items():
-                    shape = series.get_shape()
-                    print('        ', series, shape, series.SeriesDescription)
+                    for se_idx, series in study.series.items():
 
-                    suffix = ''
-                    if not series.ContrastBolusAgent == 'undefined':
-                        suffix += '_%s' % series.ContrastBolusAgent
-                    if args.interpolate:
-                        suffix += '_INTERPOLATED=%ss' % str(args.stepsize)
-                    fname = '%s_%s_%s_%s%s.nii' % (patient.PatientID,
-                                                   study.StudyDate.strftime('%Y%m%d'),
-                                                   series.SeriesNumber,
-                                                   series.SeriesDescription,
-                                                   suffix)
-                    fname = '%s.nii' % (nifty_counter)
-                    nifty_counter += 1
+                        if series.filename.find('error') >= 0:
+                            continue
 
-                    FolderName = series.FolderName + series.Phase
+                        shape = series.get_shape()
 
-                    path = os.path.join(args.o, FolderName)
+                        print('        ', series, shape, series.SeriesDescription)
 
-                    if not os.path.exists(path):
-                        os.makedirs(path)
-                    fname = os.path.join(path, fname)
-                    # do not overwrite existing files
-                    if os.path.isfile(fname):
-                        print('%s already exists - SKIPPING' % fname)
-                        continue
-                    try:
+                        suffix = ''
                         if args.interpolate:
-                            nii = series.get_nii_interprolated(args.stepsize)
-                        else:
-                            nii = series.get_nii()
-                    except ValidationError as e:
-                        print('Validation FAILED: %s' % str(e))
-                        continue
-                    nii.to_filename(fname)
-                    print('created', fname)
-                    success = True
+                            suffix += '_INTERPOLATED=%ss' % str(args.stepsize)
 
-        if not success:
-            print('found no valid volumes in %s' % input_folder)
+                        fname = '%s.nii.gz' % (series.filename)
+
+
+                        foldername = study.AccessionNumber
+
+                        path = os.path.join(args.o, foldername)
+
+
+
+                        if not os.path.exists(path):
+                            os.makedirs(path)
+                        fname = os.path.join(path, fname)
+
+
+                        log_fname = os.path.join(path, "log_" + foldername + ".txt")
+                        if not os.path.isfile(log_fname):
+                            text_file = open(log_fname, "w")
+                            text_file.write(study.log)
+                            text_file.close()
+
+                        log_overview_fname = os.path.join(args.o, "log_" + foldername + ".txt")
+                        if not os.path.isfile(log_overview_fname):
+                            text_file = open(log_overview_fname, "w")
+                            text_file.write(study.log)
+                            text_file.close()
+
+                        # do not overwrite existing files
+                        if os.path.isfile(fname):
+                            print('%s already exists - SKIPPING' % fname)
+                            continue
+                        try:
+                            if args.interpolate:
+                                nii = series.get_nii_interprolated(args.stepsize)
+                            else:
+                                nii = series.get_nii()
+                        except ValidationError as e:
+                            print('Validation FAILED: %s' % str(e))
+                            continue
+                        nii.to_filename(fname)
+                        print('created', fname)
+                        success = True
+
+            if not success:
+                print('found no valid volumes in %s' % root)
+
+            container = None
+            container = DCMContainer(use_protocol_name=args.pn)

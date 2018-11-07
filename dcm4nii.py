@@ -119,9 +119,10 @@ class Study(object):
             element[1] = element[1].replace(' ', '')
 
         for index in range(len(all_series)):
-            if all_series[index][1].find('mapping') >= 0 or all_series[index][1].find('navigator') >= 0 or \
-                    all_series[index][1].find('mip_cor') >= 0 or all_series[index][1].find('resp') >= 0 or \
-                    all_series[index][1].find('dixon') >= 0 or all_series[index][1].find('ringe3phasen') >= 0 or \
+            #update
+            if all_series[index][1].find('mapping') >= 0 or (all_series[index][1].find('navigator') >= 0 and \
+                                                             all_series[index][1].find('resp') >= 0) or all_series[index][1].find('mip_cor') >= 0 or \
+                    all_series[index][1].find('resp') >= 0 or all_series[index][1].find('ringe3phasen') >= 0 or \
                     all_series[index][1].find('4mm3messungen') >= 0:
                 all_series[index][2] = 'error_not_a_valid_imagename'
 
@@ -135,9 +136,47 @@ class Study(object):
         #  2 t2_spc_cor mrcp use the last one
         for index in reversed(range(len(all_series))):
             if all_series[index][2] == '':
-                if all_series[index][1].find('t2_spc_cor') >= 0 and all_series[index][1].find('mrcp') >= 0:
+                # update
+                if all_series[index][1].find('mrcp') >= 0:
                     all_series[index][2] = 't2_spc_cor'
                     break #TODO or continue to find all other mrcp?
+
+        # update
+        # 3 dixon
+        for index in reversed(range(len(all_series))):
+            if all_series[index][2] == '':
+                if all_series[index][1].find('dixon') >= 0:
+                    for i in range(4):
+                        # TODO correct names
+                        if all_series[index + i][1].find('up') >= 0:
+                            all_series[index + i][2] = 't1_vibe_dixon_up'
+                        elif all_series[index + i][1].find('down') >= 0:
+                            all_series[index + i][2] = 't1_vibe_dixon_down'
+                        elif all_series[index + i][1].find('f') >= 0:
+                            all_series[index + i][2] = 't1_vibe_dixon_f'
+                        elif all_series[index + i][1].find('s') >= 0:
+                            all_series[index + i][2] = 't1_vibe_dixon_s'
+
+
+        # update
+        #  ?? navigator
+        for index in reversed(range(len(all_series))):
+            if all_series[index][2] == '':
+                # update
+                if all_series[index][1].find('navigator') >= 0:
+                    all_series[index][2] = 'navigator--'
+                    break
+
+        # update
+        #  ?? diff
+        for index in reversed(range(len(all_series))):
+            if all_series[index][2] == '':
+                # update
+                if all_series[index][1].find('diff') >= 0:
+                    all_series[index][2] = 'diff--'
+                    break
+
+
 
         # 6 t1_vibe_tra
         for index in range(len(all_series)):

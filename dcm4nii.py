@@ -120,10 +120,11 @@ class Study(object):
 
         for index in range(len(all_series)):
             #update
-            if all_series[index][1].find('mapping') >= 0 or (all_series[index][1].find('navigator') >= 0 and \
-                                                             all_series[index][1].find('resp') >= 0) or all_series[index][1].find('mip_cor') >= 0 or \
+            if  (all_series[index][1].find('navigator') >= 0 and all_series[index][1].find('resp') >= 0) or \
+                    all_series[index][1].find('mapping') >= 0 or all_series[index][1].find('mip_cor') >= 0 or \
                     all_series[index][1].find('resp') >= 0 or all_series[index][1].find('ringe3phasen') >= 0 or \
-                    all_series[index][1].find('4mm3messungen') >= 0:
+                    all_series[index][1].find('4mm3messungen') >= 0 or all_series[index][1].find('localizer') >= 0 or \
+                    all_series[index][0] == '':
                 all_series[index][2] = 'error_not_a_valid_imagename'
 
         # 1 t1fl2d
@@ -148,14 +149,14 @@ class Study(object):
                 if all_series[index][1].find('dixon') >= 0:
                     for i in range(4):
                         # TODO correct names
-                        if all_series[index + i][1].find('up') >= 0:
-                            all_series[index + i][2] = 't1_vibe_dixon_up'
-                        elif all_series[index + i][1].find('down') >= 0:
-                            all_series[index + i][2] = 't1_vibe_dixon_down'
-                        elif all_series[index + i][1].find('f') >= 0:
-                            all_series[index + i][2] = 't1_vibe_dixon_f'
-                        elif all_series[index + i][1].find('s') >= 0:
-                            all_series[index + i][2] = 't1_vibe_dixon_s'
+                        if all_series[index - i][1].find('opp') >= 0:
+                            all_series[index - i][2] = 't1_vibe_dixon_opp'
+                        elif all_series[index - i][1].find('in') >= 0:
+                            all_series[index - i][2] = 't1_vibe_dixon_in'
+                        elif all_series[index - i][1].find('f') >= 0:
+                            all_series[index - i][2] = 't1_vibe_dixon_f'
+                        elif all_series[index - i][1].find('w') >= 0:
+                            all_series[index - i][2] = 't1_vibe_dixon_w'
 
 
         # update
@@ -164,7 +165,7 @@ class Study(object):
             if all_series[index][2] == '':
                 # update
                 if all_series[index][1].find('navigator') >= 0:
-                    all_series[index][2] = 'navigator--'
+                    all_series[index][2] = 't2_tse_tra_navigator'
                     break
 
         # update
@@ -172,10 +173,15 @@ class Study(object):
         for index in reversed(range(len(all_series))):
             if all_series[index][2] == '':
                 # update
-                if all_series[index][1].find('diff') >= 0:
-                    all_series[index][2] = 'diff--'
+                if all_series[index][1].find('diff') >= 0 and all_series[index][1].find('adc') >= 0:
+                    all_series[index][2] = 'ep2d_diff_adc'
                     break
-
+        for index in reversed(range(len(all_series))):
+            if all_series[index][2] == '':
+                # update
+                if all_series[index][1].find('diff') >= 0 and not all_series[index][1].find('adc') >= 0:
+                    all_series[index][2] = 'ep2d_diff'
+                    break
 
 
         # 6 t1_vibe_tra
@@ -302,7 +308,9 @@ class Study(object):
 
         for current_series in all_series:
             if current_series[2] == '':
-                current_series[2] = 'error_description_not_matching'
+                # update
+                # move to subfolder
+                current_series[2] = 'backupfile_' + str(current_series[0]) + '_' + str(current_series[1])
 
         self.log = ''
         for current_series in all_series:

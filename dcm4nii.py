@@ -110,7 +110,8 @@ class Study(object):
     def set_series_filenames(self):
         all_series = []
         for series_index, series in self.series.items():
-            all_series.append([series.SeriesNumber, series.SeriesDescription, '', series_index])
+            if isinstance(series.SeriesNumber, int):
+                all_series.append([series.SeriesNumber, series.SeriesDescription, '', series_index])
         #print "list sortetd by series_number"
         all_series = sorted(all_series, key=lambda x: x[0])
 
@@ -124,7 +125,7 @@ class Study(object):
                     all_series[index][1].find('mapping') >= 0 or all_series[index][1].find('mip_cor') >= 0 or \
                     all_series[index][1].find('resp') >= 0 or all_series[index][1].find('ringe3phasen') >= 0 or \
                     all_series[index][1].find('4mm3messungen') >= 0 or all_series[index][1].find('localizer') >= 0 or \
-                    all_series[index][0] == '':
+                    all_series[index][1] == '':
                 all_series[index][2] = 'error_not_a_valid_imagename'
 
         # 1 t1fl2d
@@ -580,7 +581,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     for input_folder in tqdm(args.input_folders):
-        print input_folder
+        print(input_folder)
         container = DCMContainer(use_protocol_name=args.pn)
         print('reading files for', input_folder)
         for root, dirnames, filenames in os.walk(input_folder):

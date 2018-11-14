@@ -157,6 +157,7 @@ class Study(object):
                             all_series[index - i][2] = 't1_vibe_dixon_f'
                         elif all_series[index - i][1].find('w') >= 0:
                             all_series[index - i][2] = 't1_vibe_dixon_w'
+                    break
 
 
         # update

@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import os
@@ -110,7 +111,8 @@ class Study(object):
     def set_series_filenames(self):
         all_series = []
         for series_index, series in self.series.items():
-            all_series.append([series.SeriesNumber, series.SeriesDescription, '', series_index])
+            if isinstance(series.SeriesNumber, int):
+                all_series.append([series.SeriesNumber, series.SeriesDescription, '', series_index])
         #print "list sortetd by series_number"
         all_series = sorted(all_series, key=lambda x: x[0])
 
@@ -120,10 +122,11 @@ class Study(object):
 
         for index in range(len(all_series)):
             #update
-            if all_series[index][1].find('mapping') >= 0 or (all_series[index][1].find('navigator') >= 0 and \
-                                                             all_series[index][1].find('resp') >= 0) or all_series[index][1].find('mip_cor') >= 0 or \
+            if  (all_series[index][1].find('navigator') >= 0 and all_series[index][1].find('resp') >= 0) or \
+                    all_series[index][1].find('mapping') >= 0 or all_series[index][1].find('mip_cor') >= 0 or \
                     all_series[index][1].find('resp') >= 0 or all_series[index][1].find('ringe3phasen') >= 0 or \
-                    all_series[index][1].find('4mm3messungen') >= 0:
+                    all_series[index][1].find('4mm3messungen') >= 0 or all_series[index][1].find('localizer') >= 0 or \
+                    all_series[index][1] == '':
                 all_series[index][2] = 'error_not_a_valid_imagename'
 
         # 1 t1fl2d
@@ -148,14 +151,15 @@ class Study(object):
                 if all_series[index][1].find('dixon') >= 0:
                     for i in range(4):
                         # TODO correct names
-                        if all_series[index + i][1].find('up') >= 0:
-                            all_series[index + i][2] = 't1_vibe_dixon_up'
-                        elif all_series[index + i][1].find('down') >= 0:
-                            all_series[index + i][2] = 't1_vibe_dixon_down'
-                        elif all_series[index + i][1].find('f') >= 0:
-                            all_series[index + i][2] = 't1_vibe_dixon_f'
-                        elif all_series[index + i][1].find('s') >= 0:
-                            all_series[index + i][2] = 't1_vibe_dixon_s'
+                        if all_series[index - i][1].find('opp') >= 0:
+                            all_series[index - i][2] = 't1_vibe_dixon_opp'
+                        elif all_series[index - i][1].find('in') >= 0:
+                            all_series[index - i][2] = 't1_vibe_dixon_in'
+                        elif all_series[index - i][1].find('f') >= 0:
+                            all_series[index - i][2] = 't1_vibe_dixon_f'
+                        elif all_series[index - i][1].find('w') >= 0:
+                            all_series[index - i][2] = 't1_vibe_dixon_w'
+                    break
 
 
         # update
@@ -164,7 +168,7 @@ class Study(object):
             if all_series[index][2] == '':
                 # update
                 if all_series[index][1].find('navigator') >= 0:
-                    all_series[index][2] = 'navigator--'
+                    all_series[index][2] = 't2_tse_tra_navigator'
                     break
 
         # update
@@ -172,10 +176,15 @@ class Study(object):
         for index in reversed(range(len(all_series))):
             if all_series[index][2] == '':
                 # update
-                if all_series[index][1].find('diff') >= 0:
-                    all_series[index][2] = 'diff--'
+                if all_series[index][1].find('diff') >= 0 and all_series[index][1].find('adc') >= 0:
+                    all_series[index][2] = 'ep2d_diff_adc'
                     break
-
+        for index in reversed(range(len(all_series))):
+            if all_series[index][2] == '':
+                # update
+                if all_series[index][1].find('diff') >= 0 and not all_series[index][1].find('adc') >= 0:
+                    all_series[index][2] = 'ep2d_diff'
+                    break
 
 
         # 6 t1_vibe_tra
@@ -302,7 +311,9 @@ class Study(object):
 
         for current_series in all_series:
             if current_series[2] == '':
-                current_series[2] = 'error_description_not_matching'
+                # update
+                # move to subfolder
+                current_series[2] = 'backupfile_' + str(current_series[0]) + '_' + str(current_series[1])
 
         self.log = ''
         for current_series in all_series:
@@ -471,7 +482,6 @@ class Series(object):
         """
         This function returns the dicoms of this series in a sorted list by applying the method described in
         https://itk.org/pipermail/insight-users/2003-September/004762.html
-
         It assumes that the dicom images are either part of 3D Volume or a 2D+t timeseries.
         """
 
@@ -498,7 +508,7 @@ class Series(object):
         sorted_dicoms = self._get_sorted_dicoms()
         for index, dcm in enumerate(sorted_dicoms):
             im[:, :, index] = dcm.pixel_array
-        im = im[::-1, ::-1, ::-1]
+        im = im[:, ::-1, ::-1]
 
         # Build the affine transform
         # http://nipy.org/nibabel/dicom/dicom_orientation.html
@@ -571,7 +581,7 @@ if __name__ == "__main__":
     args = parser.parse_args()
 
     for input_folder in tqdm(args.input_folders):
-        print input_folder
+        print(input_folder)
         container = DCMContainer(use_protocol_name=args.pn)
         print('reading files for', input_folder)
         for root, dirnames, filenames in os.walk(input_folder):

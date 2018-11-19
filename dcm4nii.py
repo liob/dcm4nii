@@ -1,3 +1,4 @@
+
 #!/usr/bin/env python
 # -*- coding: utf-8 -*-
 import os
@@ -488,7 +489,6 @@ class Series(object):
         """
         This function returns the dicoms of this series in a sorted list by applying the method described in
         https://itk.org/pipermail/insight-users/2003-September/004762.html
-
         It assumes that the dicom images are either part of 3D Volume or a 2D+t timeseries.
         """
 

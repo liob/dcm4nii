@@ -118,6 +118,7 @@ class Study(object):
         for element in all_series:
             element[1] = element[1].replace('-', '_').lower()
             element[1] = element[1].replace(' ', '')
+            element[1] = element[1].replace('fs_tra', 'tra_fs')
 
         for index in range(len(all_series)):
             #update
@@ -125,7 +126,7 @@ class Study(object):
                     all_series[index][1].find('mapping') >= 0 or all_series[index][1].find('mip_cor') >= 0 or \
                     all_series[index][1].find('resp') >= 0 or all_series[index][1].find('ringe3phasen') >= 0 or \
                     all_series[index][1].find('4mm3messungen') >= 0 or all_series[index][1].find('localizer') >= 0 or \
-                    all_series[index][1] == '':
+                    all_series[index][1].find('carebolus') >= 0 or all_series[index][1] == '':
                 all_series[index][2] = 'error_not_a_valid_imagename'
 
         # 1 t1fl2d
@@ -323,6 +324,9 @@ class Study(object):
         for current_series in all_series:
             self.series[current_series[3]].filename = current_series[2]
 
+        #for s in all_series:
+            #print(s[1])
+
 
 
 class Series(object):
@@ -453,6 +457,9 @@ class Series(object):
         if (sum(t_checked) > 0) & c_delta_t:
             raise ValidationError('Major variance in timesteps. t_gradient: %s' % str(t_gradient))
 
+        if not hasattr(self.dcm_first, 'ImageOrientationPatient'):
+            raise ValidationError('No Ímage Orientation Patient available')
+
         # We can only create nifti files, if all orientations within a series are the same
         orientation = self.dcm_first.ImageOrientationPatient
         for dcm in self.dicoms:
@@ -473,7 +480,7 @@ class Series(object):
         for i in range(1, len(positions), 1):
             diffs.append(np.linalg.norm(positions[i] - positions[i-1]))
         dev = np.std(diffs)
-        epsilon = 1e-9
+        epsilon = 1e-5
         if dev > epsilon:
             raise ValidationError("Slices not uniformly sampled, std deviation: ", dev)
 
@@ -597,7 +604,7 @@ if __name__ == "__main__":
 
             success = False
             for p_idx, patient in container.patients.items():
-                print(patient)
+                #print(patient)
                 for s_idx, study in patient.studies.items():
                     print('    ', study)
                     study.set_series_filenames()
@@ -607,9 +614,12 @@ if __name__ == "__main__":
                         if series.filename.find('error') >= 0:
                             continue
 
-                        shape = series.get_shape()
+                        try:
+                            shape = series.get_shape()
+                        except Exception as e:
+                            print(e, series.filename)
 
-                        print('        ', series, shape, series.SeriesDescription)
+                        #print('        ', series, shape, series.SeriesDescription)
 
                         suffix = ''
                         if args.interpolate:
@@ -651,10 +661,12 @@ if __name__ == "__main__":
                             else:
                                 nii = series.get_nii()
                         except ValidationError as e:
-                            print('Validation FAILED: %s' % str(e))
+                            print('        ', series, shape, series.SeriesDescription)
+                            print('Validation FAILED: %s\n' % str(e))
                             continue
+
                         nii.to_filename(fname)
-                        print('created', fname)
+                        #print('created', fname)
                         success = True
 
             if not success:

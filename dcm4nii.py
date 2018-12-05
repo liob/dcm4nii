@@ -624,7 +624,7 @@ if __name__ == "__main__":
                 for s_idx, study in patient.studies.items():
                     folder_name = os.path.join(args.o, study.AccessionNumber + "_" + str(study.StudyDate.date()))
                     for se_idx, series in study.series.items():
-                        file_name = os.path.join(folder_name, series.SeriesDescription + ".nii.gz")
+                        file_name = os.path.join(folder_name, str(series.SeriesNumber) + "_" + series.SeriesDescription + ".nii.gz")
                         try:
                             if not os.path.exists(folder_name):
                                 os.makedirs(folder_name)
@@ -634,7 +634,7 @@ if __name__ == "__main__":
                         except Exception as e:
                             error_log_path = os.path.join(folder_name, "error_log")
                             with open(error_log_path, "a+") as f:
-                                f.writelines("Exception for " + series.SeriesDescription)
+                                f.writelines("Exception for " + str(series.SeriesNumber) + "_" + series.SeriesDescription)
                                 f.writelines(traceback.format_exc())
                                 f.writelines("\n\n")
 

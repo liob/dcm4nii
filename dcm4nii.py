@@ -1,13 +1,14 @@
-
-#!/usr/bin/env python
+# !/usr/bin/env python
 # -*- coding: utf-8 -*-
 import os
+import sys
 
 import pydicom as dicom
 import nibabel as nib
 import numpy as np
 
 import argparse
+import traceback
 
 from tqdm import tqdm, trange
 from datetime import datetime, timedelta
@@ -78,8 +79,6 @@ class Study(object):
         self.log = ''
         self.AccessionNumber = ''
 
-
-
     def __repr__(self):
         return 'Study %s' % str(self.StudyInstanceUID)
 
@@ -113,7 +112,7 @@ class Study(object):
         for series_index, series in self.series.items():
             if isinstance(series.SeriesNumber, int):
                 all_series.append([series.SeriesNumber, series.SeriesDescription, '', series_index])
-        #print "list sortetd by series_number"
+        # print "list sortetd by series_number"
         all_series = sorted(all_series, key=lambda x: x[0])
 
         for element in all_series:
@@ -122,8 +121,8 @@ class Study(object):
             element[1] = element[1].replace('fs_tra', 'tra_fs')
 
         for index in range(len(all_series)):
-            #update
-            if  (all_series[index][1].find('navigator') >= 0 and all_series[index][1].find('resp') >= 0) or \
+            # update
+            if (all_series[index][1].find('navigator') >= 0 and all_series[index][1].find('resp') >= 0) or \
                     all_series[index][1].find('mapping') >= 0 or all_series[index][1].find('mip_cor') >= 0 or \
                     all_series[index][1].find('resp') >= 0 or all_series[index][1].find('ringe3phasen') >= 0 or \
                     all_series[index][1].find('4mm3messungen') >= 0 or all_series[index][1].find('localizer') >= 0 or \
@@ -143,7 +142,7 @@ class Study(object):
                 # update
                 if all_series[index][1].find('mrcp') >= 0:
                     all_series[index][2] = 't2_spc_cor'
-                    break #TODO or continue to find all other mrcp?
+                    break  # TODO or continue to find all other mrcp?
 
         # update
         # 3 dixon
@@ -161,7 +160,6 @@ class Study(object):
                         elif all_series[index - i][1].find('w') >= 0:
                             all_series[index - i][2] = 't1_vibe_dixon_w'
                     break
-
 
         # update
         #  ?? navigator
@@ -186,7 +184,6 @@ class Study(object):
                 if all_series[index][1].find('diff') >= 0 and not all_series[index][1].find('adc') >= 0:
                     all_series[index][2] = 'ep2d_diff'
                     break
-
 
         # 6 t1_vibe_tra
         for index in range(len(all_series)):
@@ -218,8 +215,6 @@ class Study(object):
                             all_series[index + j - 1][2] += str(max)
                             j -= 1
                     break
-
-
 
         # 8 ven_1 4mm
         for index in range(len(all_series)):
@@ -267,8 +262,6 @@ class Study(object):
                             j -= 1
                     break
 
-
-
         # 12 / 13 t1_vibe_tra_fs_late
         for index in reversed(range(len(all_series))):
             if all_series[index][2] == '':
@@ -282,8 +275,6 @@ class Study(object):
                 if all_series[index][1].find('t1_vibe_cor_fs') >= 0:
                     all_series[index][2] = 't1_vibe_cor_fs_late'
                     break
-
-
 
         # 9 t1_vibe_cor_fs
         for index in range(len(all_series)):
@@ -308,8 +299,6 @@ class Study(object):
                     all_series[index][2] = 't2_tse_tra_fs'
                     break
 
-
-
         for current_series in all_series:
             if current_series[2] == '':
                 # update
@@ -321,13 +310,11 @@ class Study(object):
             self.log += str(current_series[0]) + ':' + str(current_series[1]) + ' -> ' + str(current_series[2]) + '\n'
             pass
 
-
         for current_series in all_series:
             self.series[current_series[3]].filename = current_series[2]
 
-        #for s in all_series:
-            #print(s[1])
-
+        # for s in all_series:
+        # print(s[1])
 
 
 class Series(object):
@@ -411,9 +398,6 @@ class Series(object):
                 orientation = 'undef'
             self.FolderName = orientation
 
-
-
-
         if self.ContrastBolusAgent == '':
             try:
                 self.ContrastBolusAgent = dcm.ContrastBolusAgent
@@ -427,8 +411,6 @@ class Series(object):
                 self.SeriesNumber = dcm.SeriesNumber
             except:
                 self.SeriesNumber = 'undefined'
-
-
 
     def get_shape(self):
         dcm = self.dicoms[0]
@@ -479,7 +461,7 @@ class Series(object):
         # Look at the deviation of neighbour slice distances
         diffs = []
         for i in range(1, len(positions), 1):
-            diffs.append(np.linalg.norm(positions[i] - positions[i-1]))
+            diffs.append(np.linalg.norm(positions[i] - positions[i - 1]))
         dev = np.std(diffs)
         epsilon = 1e-5
         if dev > epsilon:
@@ -572,8 +554,43 @@ class Series(object):
         return nii
 
 
-if __name__ == "__main__":
+def retrieve_series_names():
+    input_folder = "dicoms_loop_15_18"
 
+    print('reading files for', input_folder)
+
+    directories = [os.path.join(input_folder, d) for d in os.listdir(input_folder)
+                   if os.path.isdir(os.path.join(input_folder, d))]
+
+    result = []
+    for index, directory in enumerate(directories):
+        print(index, "of ", len(directories))
+
+        for root, dirnames, filenames in os.walk(directory):
+            container = DCMContainer(use_protocol_name=False)
+            for filename in filenames:
+                fn = os.path.join(root, filename)
+                try:
+                    dcm = dicom.read_file(fn, defer_size='1 KB')
+                    container.append(dcm)
+                except:
+                    #print('%s is not a valid dicom file!' % fn)
+                    continue
+
+            for p_idx, patient in container.patients.items():
+                # print(patient)
+                for s_idx, study in patient.studies.items():
+                    series = [s for _, s in study.series.items()]
+                    series = sorted(series, key=lambda x: x.SeriesNumber)
+
+                    descriptions = [s.SeriesDescription for s in series]
+                    result.append(descriptions)
+
+            tmp = np.array(result)
+            np.save("tmp.np", tmp)
+
+
+if __name__ == "__main__":
     parser = argparse.ArgumentParser(description='convert dicom files to nifti (2D/3D/4D)')
     parser.add_argument('-o', metavar='OUTPUT DIR', type=str, default='.',
                         help='output directory for the plots')
@@ -587,90 +604,38 @@ if __name__ == "__main__":
                         help='input folder')
     args = parser.parse_args()
 
-    for input_folder in tqdm(args.input_folders):
-        print(input_folder)
-        container = DCMContainer(use_protocol_name=args.pn)
-        print('reading files for', input_folder)
-        for root, dirnames, filenames in os.walk(input_folder):
+    for input_folder in args.input_folders:
 
-            for filename in tqdm(filenames, desc='reading headers'):
-                fn = os.path.join(root, filename)
+        directories = [os.path.join(input_folder, directory) for directory in os.listdir(input_folder)
+                       if os.path.isdir(os.path.join(input_folder, directory))]
+        for directory in tqdm(directories):
+            container = DCMContainer(use_protocol_name=args.pn)
+
+            filenames = os.listdir(directory)
+            for filename in filenames:
+                fn = os.path.join(directory, filename)
                 try:
                     dcm = dicom.read_file(fn, defer_size='1 KB')
                     container.append(dcm)
                 except:
-                    print('%s is not a valid dicom file!' % fn)
                     continue
 
-            success = False
             for p_idx, patient in container.patients.items():
-                #print(patient)
                 for s_idx, study in patient.studies.items():
-                    print('    ', study)
-                    study.set_series_filenames()
-
+                    folder_name = os.path.join(args.o, study.AccessionNumber + "_" + str(study.StudyDate.date()))
                     for se_idx, series in study.series.items():
-
-                        if series.filename.find('error') >= 0:
-                            continue
-
+                        file_name = os.path.join(folder_name, series.SeriesDescription + ".nii.gz")
                         try:
-                            shape = series.get_shape()
+                            if not os.path.exists(folder_name):
+                                os.makedirs(folder_name)
+                            nii = series.get_nii()
+                            nii.to_filename(file_name)
+
                         except Exception as e:
-                            print(e, series.filename)
-
-                        #print('        ', series, shape, series.SeriesDescription)
-
-                        suffix = ''
-                        if args.interpolate:
-                            suffix += '_INTERPOLATED=%ss' % str(args.stepsize)
-
-                        fname = '%s.nii.gz' % (series.filename)
+                            error_log_path = os.path.join(folder_name, "error_log")
+                            with open(error_log_path, "a+") as f:
+                                f.writelines("Exception for " + series.SeriesDescription)
+                                f.writelines(traceback.format_exc())
+                                f.writelines("\n\n")
 
 
-                        foldername = study.AccessionNumber
-
-                        path = os.path.join(args.o, foldername)
-
-
-
-                        if not os.path.exists(path):
-                            os.makedirs(path)
-                        fname = os.path.join(path, fname)
-
-
-                        log_fname = os.path.join(path, "log_" + foldername + ".txt")
-                        if not os.path.isfile(log_fname):
-                            text_file = open(log_fname, "w")
-                            text_file.write(study.log)
-                            text_file.close()
-
-                        log_overview_fname = os.path.join(args.o, "log_" + foldername + ".txt")
-                        if not os.path.isfile(log_overview_fname):
-                            text_file = open(log_overview_fname, "w")
-                            text_file.write(study.log)
-                            text_file.close()
-
-                        # do not overwrite existing files
-                        if os.path.isfile(fname):
-                            print('%s already exists - SKIPPING' % fname)
-                            continue
-                        try:
-                            if args.interpolate:
-                                nii = series.get_nii_interprolated(args.stepsize)
-                            else:
-                                nii = series.get_nii()
-                        except ValidationError as e:
-                            print('        ', series, shape, series.SeriesDescription)
-                            print('Validation FAILED: %s\n' % str(e))
-                            continue
-
-                        nii.to_filename(fname)
-                        #print('created', fname)
-                        success = True
-
-            if not success:
-                print('found no valid volumes in %s' % root)
-
-            container = None
-            container = DCMContainer(use_protocol_name=args.pn)
